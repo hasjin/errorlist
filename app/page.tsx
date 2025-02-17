@@ -1,101 +1,334 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+import React, {useEffect, useState, useRef} from "react";
+import axios from "axios";
+import Link from "next/link";
+import Image from 'next/image'
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+/** 오늘 날짜(YYYYMMDD) 계산 */
+function getTodayString(): string {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}${m}${d}`;
+}
+
+interface MyException {
+    id: number;
+    instanceId: string;
+    lineNo: number;
+    preLines: string;
+    exceptionMessage: string;
+    stackTrace: string;
+}
+
+export default function HomePage() {
+    const [instances, setInstances] = useState<string[]>([]);
+    const [selectedId, setSelectedId] = useState("");
+    const [dates, setDates] = useState<string[]>([]);
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [exceptionsForDate, setExceptionsForDate] = useState<MyException[]>([]);
+
+    // 모달
+    const [openModal, setOpenModal] = useState(false);
+    const [selectedException, setSelectedException] = useState<MyException | null>(null);
+
+    // 모달 내용만 복사하기 위한 ref
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    const today = getTodayString();
+
+    // 1) 인스턴스 목록
+    useEffect(() => {
+        axios
+            .get<string[]>("http://localhost:4000/logs/instances")
+            .then((res) => {
+                setInstances(res.data);
+                if (res.data.length > 0) {
+                    setSelectedId(res.data[0]);
+                }
+            })
+            .catch((err) => {
+                console.error(err);
+                alert("인스턴스 목록 조회 중 오류 발생");
+            });
+    }, []);
+
+    // 2) 인스턴스 변경 시 날짜 목록 불러오기
+    useEffect(() => {
+        if (!selectedId) return;
+        fetchExtractedDates(selectedId);
+        setSelectedDate(null);
+        setExceptionsForDate([]);
+    }, [selectedId]);
+
+    const fetchExtractedDates = async (instId: string) => {
+        try {
+            const res = await axios.get<string[]>(`http://localhost:4000/logs/extracted-dates/${instId}`);
+            setDates(res.data);
+        } catch (error) {
+            console.error(error);
+            alert("이전 로그 목록 조회 중 오류 발생");
+        }
+    };
+
+    const hasTodayLog = dates.includes(today);
+
+    // 3) 로그 추출
+    const handleExtract = async () => {
+        if (!selectedId) {
+            alert("인스턴스를 선택하세요.");
+            return;
+        }
+        try {
+            const res = await axios.post("http://localhost:4000/logs/extract", {
+                instanceId: selectedId,
+            });
+            alert(res.data.message);
+            await fetchExtractedDates(selectedId);
+        } catch (error) {
+            console.error(error);
+            alert("로그 추출 중 오류 발생");
+        }
+    };
+
+    // 4) 날짜 클릭 → 예외 목록
+    const handleDateClick = async (date: string) => {
+        try {
+            const res = await axios.get<MyException[]>("http://localhost:4000/logs/exceptions-date", {
+                params: {instanceId: selectedId, date},
+            });
+            setSelectedDate(date);
+            setExceptionsForDate(res.data);
+        } catch (err) {
+            console.error(err);
+            alert("해당 날짜 예외 목록 조회 중 오류 발생");
+        }
+    };
+
+    // 예외 클릭 → 모달 열기
+    const handleExceptionClick = (ex: MyException) => {
+        setSelectedException(ex);
+        setOpenModal(true);
+    };
+
+    // 모달 닫기
+    const handleCloseModal = () => {
+        setOpenModal(false);
+        setSelectedException(null);
+    };
+
+    // 날짜 목록 화면으로 돌아가기
+    const handleBackToDates = () => {
+        setSelectedDate(null);
+        setExceptionsForDate([]);
+    };
+
+    // ESC 키 감지 -> 모달 닫기
+    useEffect(() => {
+        function onKeyDown(e: KeyboardEvent) {
+            if (e.key === "Escape" && openModal) {
+                handleCloseModal();
+            }
+        }
+
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [openModal]);
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-gray-100 to-gray-300 p-4">
+            <div className="mx-auto max-w-[1600px]">
+                {/* 상단 헤더 */}
+                <div className="flex items-center mb-6">
+                    <Link href="/" className="flex items-center space-x-2">
+                        <Image src="/headache.svg" width={150} height={200} alt="logo" />
+                    </Link>
+                    <h1 className="ml-4 text-3xl font-bold">Tomcat Exception<br/> 조회 시스템</h1>
+                </div>
+
+                {/* 인스턴스 선택 & 로그 추출 */}
+                <div className="flex flex-wrap items-center gap-4 mb-6">
+                    <div>
+                        <label className="block mb-1 font-medium" htmlFor="instanceSelect">
+                            인스턴스
+                        </label>
+                        <select
+                            id="instanceSelect"
+                            className="border border-gray-300 rounded px-3 py-2 focus:outline-none"
+                            value={selectedId}
+                            onChange={(e) => setSelectedId(e.target.value)}
+                        >
+                            {instances.map((inst) => (
+                                <option key={inst} value={inst}>
+                                    {inst}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    {!hasTodayLog ? (
+                        <button
+                            onClick={handleExtract}
+                            className="bg-blue-600 text-white rounded px-4 py-2 hover:bg-blue-700 transition"
+                        >
+                            오늘({today}) 로그 추출
+                        </button>
+                    ) : (
+                        <span className="text-green-600">
+              오늘({today}) 로그가 이미 추출되었습니다.
+            </span>
+                    )}
+                </div>
+
+                {/* 날짜 목록 or 예외 목록 */}
+                {selectedDate ? (
+                    <div className="bg-white shadow p-4 rounded">
+                        <h2 className="text-xl font-semibold mb-2">
+                            [{selectedId}] {selectedDate} 예외 목록
+                        </h2>
+                        <button
+                            onClick={handleBackToDates}
+                            className="text-blue-600 underline mb-2"
+                        >
+                            ← 날짜 목록으로
+                        </button>
+                        {exceptionsForDate.length > 0 ? (
+                            <div className="overflow-auto">
+                                {/* 테이블 폰트: text-xs => 작게 */}
+                                <table className="w-full text-xs border-collapse">
+                                    <thead>
+                                    <tr className="bg-gray-100 border-b">
+                                        <th className="p-2 text-left">Line No</th>
+                                        <th className="p-2 text-left">Exception Message</th>
+                                        <th className="p-2 text-left">상세</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {exceptionsForDate.map((ex) => (
+                                        <tr key={ex.id} className="border-b">
+                                            <td className="p-2">{ex.lineNo}</td>
+                                            <td className="p-2">
+                                                {ex.exceptionMessage.slice(0, 80)}
+                                                {ex.exceptionMessage.length > 80 && "..."}
+                                            </td>
+                                            <td className="p-2">
+                                                <button
+                                                    onClick={() => handleExceptionClick(ex)}
+                                                    className="border border-gray-400 rounded px-2 py-1 hover:bg-gray-50"
+                                                >
+                                                    보기
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <p>해당 날짜에 예외가 없습니다.</p>
+                        )}
+                    </div>
+                ) : dates.length > 0 ? (
+                    <div className="bg-white shadow p-4 rounded">
+                        <h2 className="text-xl font-semibold mb-2">이전 로그 목록</h2>
+                        <div className="overflow-auto">
+                            <table className="w-full text-xs border-collapse">
+                                <thead>
+                                <tr className="bg-gray-100 border-b">
+                                    <th className="p-2 text-left">날짜 (YYYYMMDD)</th>
+                                    <th className="p-2 text-left">예외 목록</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {dates.map((date) => (
+                                    <tr key={date} className="border-b">
+                                        <td className="p-2">{date}</td>
+                                        <td className="p-2">
+                                            <button
+                                                onClick={() => handleDateClick(date)}
+                                                className="border border-gray-400 rounded px-2 py-1 hover:bg-gray-50"
+                                            >
+                                                예외 조회
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-gray-600 mt-4">아직 추출된 로그가 없습니다.</p>
+                )}
+            </div>
+
+            {/* 예외 상세 모달 */}
+            {openModal && selectedException && (
+                <div
+                    className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center"
+                    onClick={handleCloseModal}
+                >
+                    <div
+                        className="relative bg-white w-[80%] h-[80%] rounded shadow-lg flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
+                        tabIndex={-1}
+                    >
+                        {/* 상단 영역 */}
+                        <div className="flex-none border-b p-4">
+                            <h3 className="text-xl font-semibold">예외 상세</h3>
+                            <p className="text-sm text-gray-600 mt-1">
+                                날짜: {selectedDate} / Line: {selectedException.lineNo}
+                            </p>
+                        </div>
+
+                        {/* 중간(스크롤 영역) */}
+                        <div className="flex-grow overflow-auto p-4 text-sm" ref={contentRef}>
+                            <div className="mb-2 text-gray-700 whitespace-pre-wrap">
+                                <b>preLines:</b> {selectedException.preLines || "(없음)"}
+                            </div>
+                            <div className="mb-2 whitespace-pre-wrap">
+                                <b>Exception Message:</b> {selectedException.exceptionMessage}
+                            </div>
+                            <div className="mb-4 whitespace-pre-wrap">
+                                <b>Stack Trace:</b> {selectedException.stackTrace || "(없음)"}
+                            </div>
+                        </div>
+
+                        {/* 하단 영역 (복사 버튼 + 닫기 버튼) */}
+                        <div className="flex-none border-t p-4 text-right space-x-2">
+                            <button
+                                onClick={async () => {
+                                    if (!contentRef.current) return;
+                                    const html = contentRef.current.innerHTML;
+                                    const text = contentRef.current.innerText;
+                                    try {
+                                        await navigator.clipboard.write([
+                                            new ClipboardItem({
+                                                "text/html": new Blob([html], {type: "text/html"}),
+                                                "text/plain": new Blob([text], {type: "text/plain"}),
+                                            }),
+                                        ]);
+                                        alert("모달 내용이 클립보드에 복사되었습니다.");
+                                    } catch (err) {
+                                        console.error("복사 실패", err);
+                                        alert("복사에 실패했습니다.");
+                                    }
+                                }}
+                                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+                            >
+                                복사
+                            </button>
+                            <button
+                                onClick={handleCloseModal}
+                                className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                            >
+                                닫기
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+    );
 }
